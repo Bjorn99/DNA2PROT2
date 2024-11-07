@@ -396,3 +396,17 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+# Ignore Python cache files
+__pycache__/
+
+# Ignore virtual environment directory
+venv/
+
+# Ignore environment variable files
+.env
+
+# Ignore log files
+*.log
+
+# Ignore system files (macOS example)
+.DS_Store
