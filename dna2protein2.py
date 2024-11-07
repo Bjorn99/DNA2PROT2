@@ -1,26 +1,11 @@
-from flask import Flask, request, render_template_string, session
+from flask import Flask, request, render_template_string
 from collections import Counter
 import re
 import os
 from typing import Dict, List, Optional, Tuple
-from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
-import secrets
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32) # Secure secret key generation
 
-
-# Rate limiting
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["20000 per day", "500 per hour"]
-
-)
 # Essential genetic code mapping
 GENETIC_CODE = {
     'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M',
@@ -44,45 +29,38 @@ GENETIC_CODE = {
 STOP_CODONS = {'TAA', 'TAG', 'TGA'}
 START_CODON = 'ATG'
 KOZAK_PATTERN = re.compile(r'(G|A)NN(A|G)TGATG')
-MAX_SEQUENCE_LENGTH = 1000000  # Prevent extremely large sequences
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB file size limit
-
-class SecurityMiddleware:
-    """Security middleware for input validation and sanitization"""
-    @staticmethod
-    def is_valid_sequence(sequence: str) -> bool:
-        return bool(re.match(r'^[ATCG]+$', sequence)) and len(sequence) <= MAX_SEQUENCE_LENGTH
-
-    @staticmethod
-    def sanitize_identifier(identifier: str) -> str:
-        return re.sub(r'[^a-zA-Z0-9_-]', '', identifier)[:50]
 
 class DNAAnalyzer:
-    def __init__(self):
-        self.security = SecurityMiddleware()
+    @staticmethod
+    def clean_sequence(sequence: str) -> str:
+        """Remove whitespace and convert to uppercase."""
+        return ''.join(sequence.strip().split()).upper()
 
-    def clean_sequence(self, sequence: str) -> str:
-        """Remove whitespace and convert to uppercase with length validation"""
-        cleaned = ''.join(sequence.strip().split()).upper()
-        if len(cleaned) > MAX_SEQUENCE_LENGTH:
-            raise ValueError(f"Sequence length exceeds maximum limit of {MAX_SEQUENCE_LENGTH} bases")
-        return cleaned
+    @staticmethod
+    def validate_sequence(sequence: str) -> bool:
+        """Check if sequence contains only valid nucleotides."""
+        return bool(re.match(r'^[ATCG]+$', sequence))
 
-    def find_orfs(self, sequence: str) -> List[str]:
-        """Find all possible open reading frames with improved efficiency"""
+    @staticmethod
+    def find_orfs(sequence: str) -> List[str]:
+        """Find all possible open reading frames."""
         orfs = []
         seq_len = len(sequence)
         
+        # Check all three reading frames
         for frame in range(3):
-            start_positions = [i for i in range(frame, seq_len-2, 3) 
-                             if sequence[i:i+3] == START_CODON]
-            
-            for start in start_positions:
-                for j in range(start + 3, seq_len - 2, 3):
-                    if sequence[j:j+3] in STOP_CODONS:
-                        orfs.append(sequence[start:j+3])
-                        break
-        
+            i = frame
+            while i < seq_len - 2:
+                codon = sequence[i:i+3]
+                if codon == START_CODON:
+                    # Found start codon, look for stop codon
+                    j = i + 3
+                    while j < seq_len - 2:
+                        if sequence[j:j+3] in STOP_CODONS:
+                            orfs.append(sequence[i:j+3])
+                            break
+                        j += 3
+                i += 3
         return orfs
 
     @staticmethod
@@ -138,55 +116,47 @@ class FastaParser:
         
         return sequences
 
-    def analyze_sequence(self, sequence: str, identifier: str) -> Dict:
-        """Complete sequence analysis with error handling"""
-        try:
-            cleaned_sequence = self.clean_sequence(sequence)
-            if not self.security.is_valid_sequence(cleaned_sequence):
-                return {"error": "Invalid DNA sequence. Use only A, T, C, and G."}
+class SequenceAnalysis:
+    def __init__(self, sequence: str, identifier: str = "input_sequence"):
+        self.analyzer = DNAAnalyzer()
+        self.sequence = self.analyzer.clean_sequence(sequence)
+        self.identifier = identifier
 
-            orfs = self.find_orfs(cleaned_sequence)
-            if not orfs:
-                return {"error": "No open reading frames found."}
+    def analyze(self) -> Dict:
+        """Perform complete sequence analysis."""
+        if not self.analyzer.validate_sequence(self.sequence):
+            return {"error": "Invalid DNA sequence. Use only A, T, C, and G."}
 
-            longest_orf = max(orfs, key=len)
-            protein = self.translate_sequence(longest_orf)
+        orfs = self.analyzer.find_orfs(self.sequence)
+        if not orfs:
+            return {"error": "No open reading frames found."}
 
-            return {
-                "sequence_id": self.security.sanitize_identifier(identifier),
-                "sequence_length": len(cleaned_sequence),
-                "longest_orf": longest_orf,
-                "protein": protein,
-                "kozak_positions": [m.start() for m in KOZAK_PATTERN.finditer(cleaned_sequence)],
-                "cai": self.calculate_cai(longest_orf),
-                "signal_peptide": self.predict_signal_peptide(protein),
-                "total_orfs": len(orfs)
-            }
-        except Exception as e:
-            app.logger.error(f"Analysis error: {str(e)}")
-            return {"error": f"Analysis failed: {str(e)}"}
+        longest_orf = max(orfs, key=len)
+        protein = self.analyzer.translate_sequence(longest_orf)
+
+        return {
+            "sequence_id": self.identifier,
+            "sequence_length": len(self.sequence),
+            "longest_orf": longest_orf,
+            "protein": protein,
+            "kozak_positions": [m.start() for m in KOZAK_PATTERN.finditer(self.sequence)],
+            "cai": self.analyzer.calculate_cai(longest_orf),
+            "signal_peptide": self.analyzer.predict_signal_peptide(protein),
+            "total_orfs": len(orfs)
+        }
 
 @app.route('/', methods=['GET', 'POST'])
-@limiter.limit("10 per minute")  # Rate limiting for API endpoint
 def index():
-    """Handle web requests with improved security and error handling"""
+    """Handle web requests and render results."""
     results = []
     error = None
-    csrf_token = secrets.token_hex(32)
-    session['csrf_token'] = csrf_token
 
     if request.method == "POST":
-        if session.get('csrf_token') != request.form.get('csrf_token'):
-            return "Invalid CSRF token", 400
-
         try:
             sequences = {}
             if 'fasta_file' in request.files:
                 file = request.files['fasta_file']
-                if file and file.filename:
-                    if len(file.read()) > MAX_FILE_SIZE:
-                        raise ValueError("File size exceeds maximum limit")
-                    file.seek(0)
+                if file.filename:
                     content = file.read().decode('utf-8')
                     sequences = FastaParser.parse(content)
             elif 'dna_sequence' in request.form:
@@ -199,9 +169,9 @@ def index():
             if not sequences:
                 raise ValueError("No sequence provided")
 
-            analyzer = DNAAnalyzer()
             for seq_id, seq in sequences.items():
-                results.append(analyzer.analyze_sequence(seq, seq_id))
+                analysis = SequenceAnalysis(seq, seq_id)
+                results.append(analysis.analyze())
 
         except Exception as e:
             error = str(e)
@@ -213,47 +183,30 @@ def index():
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="DNA to Protein Analysis Tool">
-    <title>DNA2Protein Analysis Tool</title>
+    <title>DNA2PROT2</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <style>
-        /* Custom CSS for consistent styling */
-        .custom-button {
-            @apply bg-purple-600 text-white py-2 px-4 rounded hover:bg-purple-700 transition-colors duration-200;
-        }
-        .custom-input {
-            @apply w-full p-2 border rounded focus:ring-2 focus:ring-purple-300 focus:border-purple-300;
-        }
-        .custom-card {
-            @apply bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8;
-        }
-        @media (max-width: 640px) {
-            .custom-card {
-                @apply p-4;
-            }
-        }
-    </style>
 </head>
-<body class="bg-gray-100 dark:bg-gray-900 min-h-screen">
+<body class="bg-gray-100 dark:bg-gray-900">
     <div class="container mx-auto px-4 py-8 max-w-4xl">
-        <h1 class="text-4xl font-bold text-center mb-8 text-gray-800 dark:text-white">DNA2Protein Analyzer</h1>
+        <h1 class="text-4xl font-bold text-center mb-8">DNA2PROT2</h1>
         
-        <div class="custom-card">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
             <form method="post" enctype="multipart/form-data" class="space-y-4">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                
                 <div>
-                    <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Upload FASTA File:</label>
-                    <input type="file" name="fasta_file" accept=".fasta,.fa,.txt" class="custom-input">
+                    <label class="block text-sm font-medium mb-2">Upload FASTA File:</label>
+                    <input type="file" name="fasta_file" accept=".fasta,.fa,.txt" 
+                           class="w-full p-2 border rounded">
                 </div>
                 
                 <div>
-                    <label class="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Or Enter Sequence:</label>
-                    <textarea name="dna_sequence" rows="4" class="custom-input"
+                    <label class="block text-sm font-medium mb-2">Or Enter Sequence:</label>
+                    <textarea name="dna_sequence" rows="4" 
+                             class="w-full p-2 border rounded"
                              placeholder="Enter DNA sequence or FASTA format"></textarea>
                 </div>
                 
-                <button type="submit" class="custom-button w-full">
+                <button type="submit" 
+                        class="w-full bg-green-600 text-white py-2 px-4 rounded hover:bg-green-800">
                     Analyze Sequence
                 </button>
             </form>
@@ -266,42 +219,35 @@ def index():
         {% endif %}
 
         {% for result in results %}
-        <div class="custom-card">
-            <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-white">{{ result.sequence_id }}</h2>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
+            <h2 class="text-xl font-bold mb-4">{{ result.sequence_id }}</h2>
             {% if result.error %}
             <div class="text-red-600">{{ result.error }}</div>
             {% else %}
             <div class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <h3 class="font-semibold text-gray-700 dark:text-gray-300">Sequence Length:</h3>
-                        <p class="text-gray-600 dark:text-gray-400">{{ result.sequence_length }} bp</p>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-700 dark:text-gray-300">Total ORFs Found:</h3>
-                        <p class="text-gray-600 dark:text-gray-400">{{ result.total_orfs }}</p>
-                    </div>
-                </div>
-                
                 <div>
-                    <h3 class="font-semibold text-gray-700 dark:text-gray-300">Longest ORF:</h3>
-                    <p class="font-mono text-sm break-all text-gray-600 dark:text-gray-400">{{ result.longest_orf }}</p>
+                    <h3 class="font-semibold">Sequence Length:</h3>
+                    <p>{{ result.sequence_length }} bp</p>
                 </div>
-                
                 <div>
-                    <h3 class="font-semibold text-gray-700 dark:text-gray-300">Protein Translation:</h3>
-                    <p class="font-mono text-sm break-all text-gray-600 dark:text-gray-400">{{ result.protein }}</p>
+                    <h3 class="font-semibold">Longest ORF:</h3>
+                    <p class="font-mono text-sm break-all">{{ result.longest_orf }}</p>
                 </div>
-                
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <h3 class="font-semibold text-gray-700 dark:text-gray-300">CAI Score:</h3>
-                        <p class="text-gray-600 dark:text-gray-400">{{ "%.3f"|format(result.cai) }}</p>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-gray-700 dark:text-gray-300">Signal Peptide:</h3>
-                        <p class="text-gray-600 dark:text-gray-400">{{ result.signal_peptide }}</p>
-                    </div>
+                <div>
+                    <h3 class="font-semibold">Protein Translation:</h3>
+                    <p class="font-mono text-sm break-all">{{ result.protein }}</p>
+                </div>
+                <div>
+                    <h3 class="font-semibold">Total ORFs Found:</h3>
+                    <p>{{ result.total_orfs }}</p>
+                </div>
+                <div>
+                    <h3 class="font-semibold">CAI Score:</h3>
+                    <p>{{ "%.3f"|format(result.cai) }}</p>
+                </div>
+                <div>
+                    <h3 class="font-semibold">Signal Peptide:</h3>
+                    <p>{{ result.signal_peptide }}</p>
                 </div>
             </div>
             {% endif %}
@@ -310,8 +256,8 @@ def index():
     </div>
 </body>
 </html>
-    ''', results=results, error=error, csrf_token=csrf_token)
+    ''', results=results, error=error)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)  # Debug mode disabled for production
+    app.run(host='0.0.0.0', port=port, debug=True)
