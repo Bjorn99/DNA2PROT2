@@ -77,12 +77,33 @@ class DNAAnalyzer:
     @staticmethod
     def calculate_cai(sequence: str) -> float:
         """Calculate Codon Adaptation Index."""
+
+        codon_usage = {
+            'ATA': 0.07, 'ATC': 0.25, 'ATT': 0.16, 'ATG': 1.0,
+            'ACA': 0.14, 'ACC': 0.35, 'ACG': 0.09, 'ACT': 0.18,
+            'AAC': 0.52, 'AAT': 0.48, 'AAA': 0.56, 'AAG': 0.44,
+            'AGC': 0.31, 'AGT': 0.19, 'AGA': 0.15, 'AGG': 0.12,
+            'CTA': 0.06, 'CTC': 0.22, 'CTG': 0.49, 'CTT': 0.12,
+            'CCA': 0.20, 'CCC': 0.27, 'CCG': 0.10, 'CCT': 0.19,
+            'CAC': 0.52, 'CAT': 0.48, 'CAA': 0.37, 'CAG': 0.63,
+            'CGA': 0.06, 'CGC': 0.26, 'CGG': 0.12, 'CGT': 0.11,
+            'GTA': 0.09, 'GTC': 0.22, 'GTG': 0.37, 'GTT': 0.17,
+            'GCA': 0.17, 'GCC': 0.39, 'GCG': 0.08, 'GCT': 0.21,
+            'GAC': 0.55, 'GAT': 0.45, 'GAA': 0.57, 'GAG': 0.43,
+            'GGA': 0.19, 'GGC': 0.37, 'GGG': 0.13, 'GGT': 0.16,
+            'TCA': 0.13, 'TCC': 0.22, 'TCG': 0.06, 'TCT': 0.19,
+            'TTC': 0.52, 'TTT': 0.48, 'TTA': 0.08, 'TTG': 0.15,
+            'TAC': 0.53, 'TAT': 0.47, 'TAA': 0.27, 'TAG': 0.04,
+            'TGC': 0.52, 'TGT': 0.48, 'TGA': 0.68, 'TGG': 1.0
+        }
+
+
         codons = [sequence[i:i+3] for i in range(0, len(sequence) - 2, 3)]
-        codon_counts = Counter(codons)
-        total_codons = sum(codon_counts.values())
-        if total_codons == 0:
-            return 0.0
-        return sum(count / total_codons for count in codon_counts.values())
+        cai_sum = 0
+        for codon in codons:
+            if codon in codon_usage:
+                cai_sum += codon_usage[codon]
+        return cai_sum / len(codons)
 
     @staticmethod
     def predict_signal_peptide(protein: str) -> str:
