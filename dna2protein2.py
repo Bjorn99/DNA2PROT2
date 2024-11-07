@@ -5,6 +5,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+import secrets
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32) # Secure secret key generation
