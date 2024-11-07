@@ -34,6 +34,6 @@ While DNA2PROT2 is a powerful tool, it's important to remember that it has a few
 
 3. **Computational Power**: As with any web-based application, the performance of DNA2PROT2 is dependent on the resources of the hosting server. While we've optimized the app for speed and scalability, very large sequences or high-volume usage may encounter some limitations.
 
-If you have any questions, feedback, or feature requests, don't hesitate to reach out to our team. We're always striving to make DNA2PROT2 the best it can be, and your input is invaluable.
+If you have any questions, feedback, or feature requests, don't hesitate to reach out. Your input is invaluable.
 
 Happy analyzing!
