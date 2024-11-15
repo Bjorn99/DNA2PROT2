@@ -22,8 +22,6 @@ With DNA2PROT2, you can:
 
 5. **Detect Signal Peptides**: Wondering if your protein has a secret signal for targeting specific cellular compartments? The signal peptide prediction can help unravel these hidden messages.
 
-6. **Visualize Your Results**: This app will present your analysis in a clean, user-friendly format, complete with colorful heatmaps and intuitive data displays. No more squinting at lines of code.
-
 ## What Are the Limits?
 
 While DNA2PROT2 is a powerful tool, it's important to remember that it has a few limitations:
